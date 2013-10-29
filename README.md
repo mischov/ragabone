@@ -20,8 +20,7 @@ For example, here is how you would scrape the headlines and links from the first
                 [:.title :a] (r/text)
                 [:.title :a] (r/attr :href))
 
-;> ({:url "..." :title "..."}
-    {:url "..." :title "..."})
+;> ({:url "..." :title "..."} {:url "..." :title "..."} ...)
 ```
 ## Contents
 
@@ -30,7 +29,7 @@ For example, here is how you would scrape the headlines and links from the first
     - [Parsing](#parsing)
     - [Selectors](#selectors)
         - [Faux-CSS Selectors](#faux-css-selectors)
-	- [Functional Selectors](#functional-selectors)
+        - [Functional Selectors](#functional-selectors)
     - [Extractors](#extractors)
     - [extract vs. extract-from](#extract-vs-extract-from)
 - [Acknowledgements](#acknowledgements)
@@ -47,33 +46,9 @@ In his article [Scraping HTML Table Data in Clojure for Profit](http://blog.safa
 
 ```clojure
 (ns tablescrape.enlive
-  (:require [clj-time.core]
-            [clj-time.format :refer :all]
-            [net.cgrand.enlive-html :refer :all]))
-
-;; Misc Parsers
-
-(defn date-parser
-  "Create a date parsing function for a format"
-  [format-string]
-  #(parse (formatter format-string) %))
-
-(defn parse-number
-  "Reads a number from a string. Returns nil if not a number."
-  [^String s]
-  (if (re-find #"^-?\d+\.?\d*([Ee]\+\d+|[Ee]-\d+|[Ee]\d+)?$"
-               (.trim s))
-    (read-string s)))
-
-(defn parse-money
-  "Reads a number from a string, ignoring $ and , to just get the value"
-  [^String s]
-  (-> s
-      (clojure.string/replace "$" "")
-      (clojure.string/replace "," "")
-      parse-number))
+  (:require [net.cgrand.enlive-html :refer :all]))
 	    
-;; The Enlive Bits
+;; Boilerplate to make Enlive more reusable
 	    
 (defn contents [x]
   (map (comp first :content) x))
@@ -100,7 +75,7 @@ In his article [Scraping HTML Table Data in Clojure for Profit](http://blog.safa
     selector)
    fs))
 
-;; The Working Example
+;; The Working Example, imagine date-parser and parse-money were defined.
 
 (scrape-table "http://www.multpl.com/table?f=m"
               [:table#datatable]
@@ -111,42 +86,18 @@ Here is what it would haved looked like if he had used Ragabone.
 
 ```clojure
 (ns tablescrape.ragabone
-  (:require [clj-time.core]
-            [clj-time.format :refer :all]
-            [ragabone :as r]))
-
-;; Misc Parsers
-
-(defn date-parser
-  "Create a date parsing function for a format"
-  [format-string]
-  #(parse (formatter format-string) %))
-
-(defn parse-number
-  "Reads a number from a string. Returns nil if not a number."
-  [^String s]
-  (if (re-find #"^-?\d+\.?\d*([Ee]\+\d+|[Ee]-\d+|[Ee]\d+)?$"
-               (.trim s))
-    (read-string s)))
-
-(defn parse-money
-  "Reads a number from a string, ignoring $ and , to just get the value"
-  [^String s]
-  (-> s
-      (clojure.string/replace "$" "")
-      (clojure.string/replace "," "")
-      parse-number))
+  (:require [ragabone :as r]))
 
 ;; In Ragabone fetching and extracting html are separate concerns.
 
 (def html (slurp "http://www.multpl.com/table?f=m"))
 
-;; The Working Example
+;; The Working Example, imagine date-parser and parse-money were defined.
 
 (r/extract-from (r/parse html) [:tbody :tr]
-	   []
-	   [:td.left] (r/compose r/text (date-parser "MMM dd, yyyy"))
-	   [:td.right] (r/compose r/text parse-money))
+                []
+                [:td.left] (r/compose r/text (date-parser "MMM dd, yyyy"))
+                [:td.right] (r/compose r/text parse-money))
 ```
 [**Back To Top ⇧**](#contents)
 
@@ -267,7 +218,7 @@ These extractors are ``tag``, ``attr``, ``attrs``, ``text``, ``node``, ``compose
 
 Most of the time you use Ragabone you'll either be using the ``extract`` function or the ``extract-from`` function.
 
-The only difference between these functions is that ``extract-from` takes a selector as one of the initial parameters, and that selector is then used to narrow down the data to be looked through.
+The only difference between these functions is that ``extract-from`` takes a selector as one of the initial parameters, and that selector is then used to narrow down the data to be looked through.
 
 ```clojure
 (def html
@@ -279,7 +230,7 @@ The only difference between these functions is that ``extract-from` takes a sele
 
 ;> {:scraped ("1" "2")}
 
-(extract-from html [:.item]
+(extract-from html [:.item] ; [:.item] is the additional perameter
                    [:scraped]
                    [:.item] (text))
 

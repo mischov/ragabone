@@ -29,14 +29,15 @@ For example, here is how you would scrape the headlines and links from the first
 - [Quick Start](#quick-start)
     - [Parsing](#parsing)
     - [Selectors](#selectors)
-        - []
+        - [Faux-CSS Selectors](#faux-css-selectors)
+	- [Functional Selectors](#functional-selectors)
     - [Extractors](#extractors)
     - [extract vs. extract-from](#extract-vs-extract-from)
 - [Acknowledgements](#acknowledgements)
 
 ## Rationale
 
-You can already extract data from HTML with Enlive or Laser, so why both with Ragabone?
+You can already extract data from HTML with Enlive or Laser, so why bother with Ragabone?
 
 Enlive and Laser are wonderful, useful libraries, but they are first-and-foremost templating libraries. Ragabone focuses entirely on extracting data from HTML in into Clojure data strucures.
 
@@ -143,7 +144,7 @@ Here is what it would haved looked like if he had used Ragabone.
 ;; The Working Example
 
 (r/extract-from (r/parse html) [:tbody :tr]
-           []
+	   []
 	   [:td.left] (r/compose r/text (date-parser "MMM dd, yyyy"))
 	   [:td.right] (r/compose r/text parse-money))
 ```

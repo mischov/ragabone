@@ -20,7 +20,7 @@ For example, here is how you would scrape the story headlines and links from the
 ```
 ## Contents
 
-- [Installation]
+- [Installation](#installation)
 - [Rationale](#rationale)
 - [Quick Start](#quick-start)
     - [API](#api)

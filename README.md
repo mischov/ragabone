@@ -1,12 +1,8 @@
 # Ragabone
 
-```clojure
-[ragabone "0.0.9"]
-```
-
 Ragabone is a library for extracting data out of HTML and into Clojure data structures.
 
-For example, here is how you would scrape the headlines and links from the first page of the Clojure subreddit.
+For example, here is how you would scrape the story headlines and links from the Clojure subreddit.
 
 ```clojure
 (require '[ragabone :as r])
@@ -24,31 +20,43 @@ For example, here is how you would scrape the headlines and links from the first
 ```
 ## Contents
 
+- [Installation]
 - [Rationale](#rationale)
 - [Quick Start](#quick-start)
-    - [Parsing](#parsing)
+    - [API](#api)
+        - [parse](#parse)
+        - [extract](#extract)
+        - [extract-from](#extract-from)
     - [Selectors](#selectors)
         - [Faux-CSS Selectors](#faux-css-selectors)
         - [Functional Selectors](#functional-selectors)
     - [Extractors](#extractors)
-    - [extract vs. extract-from](#extract-vs-extract-from)
 - [Acknowledgements](#acknowledgements)
+
+## Installation
+
+Add the following dependency to your project.clj file:
+
+```clojure
+[ragabone "0.0.9"]
+```
+[**Back To Top ⇧**](#contents)
 
 ## Rationale
 
 You can already extract data from HTML with Enlive or Laser, so why bother with Ragabone?
 
-Enlive and Laser are wonderful, useful libraries, but they are first-and-foremost templating libraries. Ragabone focuses entirely on extracting data from HTML in into Clojure data strucures.
+Enlive and Laser are wonderful, useful libraries, but they are first-and-foremost templating libraries. Ragabone focuses entirely on extracting data out of HTML and into Clojure data strucures.
 
 This focus means that the data-extraction code you write using Ragabone is simpler and more maintainable than the code you would need to write to make Enlive or Laser do the same thing. Let me give you an example.
 
-In his article [Scraping HTML Table Data in Clojure for Profit](http://blog.safaribooksonline.com/2013/09/09/scraping-html-table-data-in-clojure-for-profit/), Timothy Pratley uses Enlive to scrape his data. Here is a cleaned up version of how he does it.
+In his article [Scraping HTML Table Data in Clojure for Profit](http://blog.safaribooksonline.com/2013/09/09/scraping-html-table-data-in-clojure-for-profit/), Timothy Pratley uses Enlive to scrape his data. Here is a truncated version of how he does it.
 
 ```clojure
 (ns tablescrape.enlive
   (:require [net.cgrand.enlive-html :refer :all]))
 	    
-;; Boilerplate to make Enlive more reusable
+;; Enlive bits
 	    
 (defn contents [x]
   (map (comp first :content) x))
@@ -75,7 +83,7 @@ In his article [Scraping HTML Table Data in Clojure for Profit](http://blog.safa
     selector)
    fs))
 
-;; The Working Example, imagine date-parser and parse-money were defined.
+;; The Working Example; imagine date-parser and parse-money were defined.
 
 (scrape-table "http://www.multpl.com/table?f=m"
               [:table#datatable]
@@ -92,7 +100,7 @@ Here is what it would haved looked like if he had used Ragabone.
 
 (def html (slurp "http://www.multpl.com/table?f=m"))
 
-;; The Working Example, imagine date-parser and parse-money were defined.
+;; The Working Example; again, imagine date-parser and parse-money were defined.
 
 (r/extract-from (r/parse html) [:tbody :tr]
                 []
@@ -103,7 +111,9 @@ Here is what it would haved looked like if he had used Ragabone.
 
 ## Quick Start
 
-### Parsing
+### API
+
+#### parse
 
 Before a string of HTML can be used by Ragabone, it needs to be parsed into the htmltree structure.
 
@@ -112,12 +122,58 @@ To do this, call the ``parse`` function on the string of html.
 ```clojure
 (def html (slurp "http://www.google.com"))
 
-(ragabone/parse html)
+(parse html)
 ```
 Ragabone also includes a convinience function, ``from-file``, for parsing files or resources.
 
 ```clojure
-(ragabone/parse (ragabone/from-file "index.html"))
+(parse (from-file "index.html"))
+```
+[**Back To Top ⇧**](#contents)
+
+#### extract
+
+``extract`` accepts an htmltree or htmltrees, a vector of keys (which can be empty or nil), and a variable number of extractions (a paired selector and extractor).  
+
+If keys are supplied, ``extract`` returns a map of the data extracted from the htmltree(s).  If no keys are supplied, ``extract`` returns a seq of the extracted data.
+
+```clojure
+(def html
+  (parse "<html><body><div class=\"main\">Content</div></body></html>"))
+
+(extract html
+         [:scraped]
+         [:.main] (text))
+
+;> {:scraped "Content"}
+
+(extract html
+         []
+         [:.main] (text))
+
+;> ("Content")
+```
+[**Back To Top ⇧**](#contents)
+
+#### extract-from
+
+``extract-from`` behaves like ``extract``, except that ``extract-from`` takes a selector as one of the initial parameters, and that selector is then used to narrow down the data before extractions are applied to it.
+
+```clojure
+(def html
+  (parse "<div><span class=\"item\">1</span><span class=\"item\">2</span></div>"))
+
+(extract html
+         [:scraped]
+         [:.item] (text)
+
+;> {:scraped ("1" "2")}
+
+(extract-from html [:.item] ; [:.item] is the selector
+                   [:scraped]
+                   [:.item] (text))
+
+;> ({:scraped "1"} {:scraped "2"})
 ```
 [**Back To Top ⇧**](#contents)
 
@@ -211,30 +267,6 @@ These extractors are ``tag``, ``attr``, ``attrs``, ``text``, ``node``, ``compose
 
 ; Returns "GOOGLE"
 ((compose text clojure.string/uppercase) html)
-```
-[**Back To Top ⇧**](#contents)
-
-### extract vs. extract from
-
-Most of the time you use Ragabone you'll either be using the ``extract`` function or the ``extract-from`` function.
-
-The only difference between these functions is that ``extract-from`` takes a selector as one of the initial parameters, and that selector is then used to narrow down the data to be looked through.
-
-```clojure
-(def html
-  (parse "<div><span class=\"item\">1</span><span class=\"item\">2</span></div>"))
-
-(extract html
-         [:scraped]
-         [:.item] (text)
-
-;> {:scraped ("1" "2")}
-
-(extract-from html [:.item] ; [:.item] is the additional perameter
-                   [:scraped]
-                   [:.item] (text))
-
-;> ({:scraped "1"} {:scraped "2"})
 ```
 [**Back To Top ⇧**](#contents)
 

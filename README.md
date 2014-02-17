@@ -13,8 +13,8 @@ For example, here is how you would scrape the story headlines and links from the
 ; extract the titles and urls from the HTML into a seq of Clojure maps.
 (r/extract-from (r/parse clojure-reddit) ".sitetable .thing"
                 [:headline :url]
-		".title a.title" (r/text)
-		".title a.title" (r/attr :href))
+                ".title a.title" (r/text)
+                ".title a.title" (r/attr :href))
 
 ;> ({:headline "...", :url "..."}, {:headline "...", :url "..."} ...)
 ```

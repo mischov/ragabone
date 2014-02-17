@@ -1,249 +1,103 @@
 (ns ragabone
-  (:refer-clojure :exclude [and or not nth])
+  (:refer-clojure :exclude [nth])
   (:require [clojure.core :as clj]
-            [clojure.java.io :as io]
-            [clojure.string :as string]
-            [clojure.zip :as zip]
-            [ragabone.parser :as parser]
-            [ragabone.zip :as rzip]))
+            [clojure.string :as string])
+  (:import [org.jsoup Jsoup]
+           [org.jsoup.parser Parser]
+           [org.jsoup.nodes Attribute Attributes Comment DataNode
+                            Document DocumentType Element Node
+                            TextNode]
+           [org.jsoup.select Elements]))
 
-;####################
-;##  PARSING, ETC  ##
-;####################
+;;;;;;;;;;;;;;;;;;
+;;  Parse HTML  ;;
+;;;;;;;;;;;;;;;;;;
 
-(defn from-file
-  "Accepts a path to a resource or other file and returns the
-   contents of that file."
-  [path]
-  (slurp (clj/or (io/resource path)
-                 (io/file path))))
+(defn parse
+  "Parses a string representing a full HTML document
+   into JSoup."
+  [^String html]
+  (when html
+    (Jsoup/parse html)))
 
-(def parse parser/parse)
+(defn parse-fragment
+  "Parses a string representing a fragment of HTML
+   into JSoup"
+  [^String html]
+  (when html
+    (-> (Jsoup/parseBodyFragment html) .body (.childNode 0))))
 
-;###########
-;##  ZIP  ##
-;###########
+;;;;;;;;;;;;;;;
+;;  Emitter  ;;
+;;;;;;;;;;;;;;;
 
-(def zip-htmltree rzip/zip-htmltree)
+(defn ^:private to-keyword
+  "Converts a string into a lowercase keyword."
+  [s]
+  (-> s string/lower-case keyword))
 
-;#################
-;##  SELECTORS  ##
-;#################
+(defn reduce-into
+  "Imperfectly mimics 'into' with 'reduce' and 'conj'
+   for better performance."
+  [empty-coll xs]
+  (reduce conj empty-coll xs))
 
-; Basically the entirety of the selectors are taken from
-; Raynes library Laser.  All credit for the awesomeness
-; goes to him, all errors are down to my lousy transcription.
+(defprotocol JSoup
+  (to-edn [jsoup]
+    "Converts JSoup into an edn representation of HTML."))
 
-(defn tag=
-  "Accepts a tag and returns a selector for any htmltree which
-   has that tag."
-  [tag]
-  (fn [loc]
-    (= (keyword tag) (-> loc zip/node :tag))))
+(extend-protocol JSoup
+  Attribute
+  (to-edn [attr] [(to-keyword (.getKey attr))
+                      (.getValue attr)])
+  Attributes
+  (to-edn [attrs] (not-empty (reduce-into {} (map to-edn attrs))))
+  Comment
+  (to-edn [comment] {:type :comment
+                     :content [(.getData comment)]})
+  DataNode
+  (to-edn [node] (str node))
+  Document
+  (to-edn [doc] {:type :document
+                 :content (not-empty
+                           (reduce-into [] (map to-edn (.childNodes doc))))})
+  DocumentType
+  (to-edn [doctype] {:type :document-type
+                     :attrs (to-edn (.attributes doctype))})
+  Element
+  (to-edn [element] {:type :element
+                     :attrs (to-edn (.attributes element))
+                     :tag (to-keyword (.tagName element))
+                     :content (not-empty
+                               (reduce-into [] (map to-edn (.childNodes element))))})
+  Elements
+  (to-edn [elements] (when (> (.size elements) 0)
+                       (map to-edn elements)))
+  TextNode
+  (to-edn [node] (.getWholeText node)))
 
-(defn attr=
-  "Accepts an attribute and a value and returns a selector for any
-   htmltree which has an attribute with that value."
-  [attr value]
-  (fn [loc]
-    (= (name value) (get-in (zip/node loc) [:attrs (keyword attr)]))))
+;;;;;;;;;;;;;;;;
+;;  Selector  ;;
+;;;;;;;;;;;;;;;;
 
-(defn attr?
-  "Accepts an attribute and returns a selector for any htmltree
-   with that attribute."
-  [attr]
-  (fn [loc]
-    (-> (zip/node loc)
-        (:attrs)
-        (contains? (keyword attr)))))
+(defn select-soup
+  "Accepts parsed HTML and a string representing a
+   CSS-esque selector and returns JSoup representing
+   any successfully selected data.
 
-(defn ^:private split-classes
-  "Given a (zipper) location, returns a set of the classes in
-   that htmltree."
-  [loc]
-  (set (string/split (get-in (zip/node loc) [:attrs :class] "") #" ")))
-
-(defn class=
-  "Accepts a variable number of strings or keywords representing
-   classes and returns a selector for any htmltree which has all
-   those classes."
-  [& classes]
-  (fn [loc]
-    (every? (split-classes loc) (map name classes))))
-
-(defn id=
-  "Accepts an id and returns a selector for any htmltree with
-   that id."
-  [id]
-  (attr= :id id))
-
-(defn any
-  "A selector that matches any htmltree."
-  []
-  (constantly true))
-
-(defn not
-  "Negates a selector."
-  [selector]
-  (fn [loc] (clj/not (selector loc))))
-
-(defn and
-  "Returns true if all selectors match."
-  [& selectors]
-  (apply every-pred selectors))
-
-(defn or
-  "Returns true if at least one selector matches."
-  [& selectors]
-  (apply some-fn selectors))
-
-(defn ^:private select-walk
-  "A generalied function for implementing selectors that do the
-   following:
-
-   1) check if the last selector matches the current loc
-   2) check that the selector before it matches a new loc
-   after a movement, and so on.
-
-   Unless all the selectors match like this, the result is
-   a non-match. The first argument is a function that will
-   be run on the result of the selector call and the loc itself
-   and should return true to continue or false to stop. The
-   second argument tells the function how to move in the
-   selector. For example, zip/up."
-  [continue? move selectors]
-  (fn [loc]
-    (let [selectors (reverse selectors)
-          selector (first selectors)]
-      (if (selector loc)
-        (loop [result false
-               loc (move loc)
-               [selector & selectors :as same] (rest selectors)]
-          (cond
-           (clj/and selector (nil? loc)) false
-           (nil? selector) result
-           :else (let [result (selector loc)]
-                   (if (continue? result loc)
-                     (recur result
-                            (move loc)
-                            (if result
-                              selectors
-                              same))
-                     result))))
-        false))))
-
-(defn child-of
-  "Checks that the last selector matches the current loc. If so,
-   checks to see if the immediate parent matches the next selector.
-   If so, repeat. Equivalent to 'foo > bar > baz' in CSS for matching
-   a baz element whose parent is a bar element whose parent is a foo
-   element."
-  [& selectors]
-  (select-walk (fn [result _] result) zip/up selectors))
-
-(defn ^:private parse-css-selector
-  "Accepts a faux-css selector and returns any tag, id, and
-   classes
-
-   A faux-css selector should follow the pattern tag then id then
-   classes. Any of these may be omitted but the order should be
-   maintained.
-
-   A tag does not have any symbol before it, an id is preceded
-   by a pound sign, and classes are preceeded by periods.
-
-   Examples:
-
-     :header#should.get.things.rolling
-     :#id.is.lonely.without.classes
-     :div.main
-     :.unstyled"
-  [selector]
-  (let [regex #"([^\s\.#]*)(?:#([^\s\.#]+))?(?:\.([^\s#]+))?"
-        [_ tag id classes] (re-matches regex (name selector))]
-    (and (if (not-empty tag)
-           (tag= tag)
-           (any))
-         (if id
-           (id= id)
-           (any))
-         (if (not-empty classes)
-           (apply class= (string/split classes #"\."))
-           (any)))))
-
-(defn ^:private parse-css-selectors
-  "Accepts a vector of css selectors and parses them."
-  [selectors]
-  (case (count selectors)
-    0 (any)
-    1 (first (map parse-css-selector selectors))
-    (apply child-of (map parse-css-selector selectors))))
-
-(def read-selector
-  "Accepts either a vector of css selectors or a selector
-   function."
-  (memoize
-   (fn [selector]
-     (cond
-      (vector? selector) (parse-css-selectors selector)
-      :else selector))))
-
-;#################
-;##  SELECTION  ##
-;#################
-
-; This section, with a couple modifications, has
-; been copied from David Santiago's Tinsel library.
-
-; After he sees what I've done to it, he'll probably
-; not want it back.  But he deserves credit for it
-; anyway.
-
-(def ^:private select-next-loc
-  "Given a selector function and a loc inside a htmltree zip
-   data structure, returns the next zipper loc that satisfies the
-   selection function. This can be the loc that is passed in, so be
-   sure to move to the next loc if you want to use this function
-   to exhaustively search through a tree manually.
-
-   Note that if there is no next node that satisfies the
-   selection function, nil is returned."
-  (memoize
-   (fn [selector-fn rzip-loc]
-     (loop [loc rzip-loc]
-       (if (zip/end? loc)
-         nil
-         (if (selector-fn loc)
-           loc
-           (recur (zip/next loc))))))))
-
-(defn ^:private select-locs
-  "Given a selector function and a htmltree data structure,
-   returns a vector containing all of the zipper locs selected
-   by the selector function."
-  [selector-fn zipper]
-  (loop [loc (select-next-loc selector-fn zipper)
-         selected-nodes (transient [])]
-    (if (nil? loc)
-      (persistent! selected-nodes)
-      (recur (select-next-loc selector-fn (zip/next loc))
-             (conj! selected-nodes loc)))))
+   For more on selector syntax, see:
+   http://jsoup.org/cookbook/extracting-data/selector-syntax"
+  [^Node node ^String css-selector]
+  (.select node css-selector))
 
 (defn select
-  "Given a selector function and a htmltree data structure,
-   returns a vector containing all of the htmltree nodes
-   selected by the selector function."
-  [selector source]
-  (let [selector-fn (read-selector selector)]
-    (if (seq? source)
-      (->> (for [zipper (map zip-htmltree source)]
-             (mapv zip/node (select-locs selector-fn zipper)))
-           (apply concat))
-      (mapv zip/node (select-locs selector-fn (zip-htmltree source))))))
+  "Like select-soup, but returns edn."
+  [node css-selector]
+  (to-edn (select-soup node css-selector)))
 
-;#################
-;##  EXTRACTORS ##
-;#################
+;;;;;;;;;;;;;;;;;
+;;  Extractor  ;;
+;;;;;;;;;;;;;;;;;
 
 (defprotocol Extractor
   "Extractors are at their lowest level protocols. This
@@ -312,8 +166,8 @@
   (nth* [htmltrees index]
     (clj/nth htmltrees index)))
 
-(defn node
-  "Extracts an entire htmltree node."
+(defn element
+  "Extracts an element."
   ([]
      (fn [selection]
        (node* selection)))
@@ -321,7 +175,7 @@
      (node* selection)))
 
 (defn tag
-  "Extracts the tag of a htmltree node."
+  "Extracts the tag of from an element."
   ([]
      (fn [selection]
        (tag* selection)))
@@ -330,7 +184,7 @@
 
 (defn attr
   "Extracts the value of the supplied attribute key from
-   a htmltree node."
+   an element."
   ([attribute]
      (fn [selection]
        (attr* selection attribute)))
@@ -338,8 +192,8 @@
      (attr* selection attribute)))
 
 (defn attrs
-  "Extracts all the attribute key/value pairs from a
-   htmltree node."
+  "Extracts all the attribute key/value pairs from an
+   element."
   ([]
      (fn [selection]
        (attrs* selection)))
@@ -347,8 +201,7 @@
      (attrs* selection)))
 
 (defn text
-  "Returns the text value of a htmltree node
-   and its contents."
+  "Returns the text value of an element and its contents."
   ([]
      (fn [selection]
        (text* selection)))
@@ -357,7 +210,7 @@
 
 (defn compose
   "Executes the supplied functions in left to right order
-   on a htmltree node."
+   on an element."
   [& fns]
   (fn [selection]
     (compose* selection fns)))
@@ -371,41 +224,37 @@
   ([index selection]
      (nth* selection index)))
 
-;############
-;##  MAIN  ##
-;############
+;;;;;;;;;;;;
+;;  Main  ;;
+;;;;;;;;;;;;
 
 (defn run-on
-  "Runs an extraction (a paired selector and extractor)
-   on a source htmltree."
-  ([source]
-     (fn [extraction]
-       (let [[selector extractor] extraction
-             selection (select selector source)]
-         (case (count selection)
-           0 nil
-           1 (extractor (first selection))
-           (extractor selection)))))
-  ([source extraction]
-     ((run-on source) extraction)))
+  [source extraction]
+  (let [[selector extract] extraction 
+        selected (select source selector)]
+    (case (count selected)
+      0 nil
+      1 (extract (first selected))
+      (extract selected))))
 
 (defn run-all-on
-  "Runs all extractions supplied to 'extract'
-   or 'extract-from' on a source htmltree."
   [source extractions]
   (case (count extractions)
     0 source
     1 (run-on source (first extractions))
-    (map (run-on source) extractions)))
+    (map #(run-on source %) extractions)))
 
 (defn extract
-  "Accepts a source htmltree, a vector of keys which may
-   be empty, and a variable number of extractions (a
-   selector followed by an extractor).
+  "Accepts parsed HTML, a vector of keys which may be
+   empty, and a variable number of extractions (which
+   is a selector followed by an extractor).
 
-   If a vector of keys is supplied, they are zipmapped to
-   the result of the tasks upon the source.  If no keys
-   are supplied, a seq of the results is returned."
+   If a vector of keys is supplied, they are zipmapped
+   together with the results of the extractions on the
+   source.
+
+   If no keys are supplied, a seq of the results is
+   returned."
   [source ks & raw-extractions]
   (let [extractions (partition 2 raw-extractions)
         extracted (run-all-on source extractions)]
@@ -417,14 +266,13 @@
         (zipmap ks extracted)))))
 
 (defn extract-from
-  "Behaves like extract, but before extracting it uses
-   the provided selector to narrow down the data to be
-   searched.
+  "Behaves like extract, but prior to extraction
+   extract-from uses the additional selector to
+   narrow down the data to be searched.
 
-   Very useful when one wants to narrow down to a seq
-   of items and then extract keys from each of those
-   items."
+   This is useful when one wants select a sequence
+   of items, then extract identical info from each."
   [raw-source selector ks & raw-extractions]
-  (let [sources (select selector raw-source)]
+  (let [sources (select-soup raw-source selector)]
     (for [source sources]
       (apply (partial extract source ks) raw-extractions))))

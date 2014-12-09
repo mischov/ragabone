@@ -47,6 +47,8 @@
     "Converts JSoup into an edn representation of HTML."))
 
 (extend-protocol JSoup
+  nil
+  (to-edn [_] nil)
   Attribute
   (to-edn [attr] [(to-keyword (.getKey attr))
                       (.getValue attr)])
@@ -88,7 +90,8 @@
    For more on selector syntax, see:
    http://jsoup.org/cookbook/extracting-data/selector-syntax"
   [^Node node ^String css-selector]
-  (.select node css-selector))
+  (when node
+    (.select node css-selector)))
 
 (defn select
   "Like select-soup, but returns edn."

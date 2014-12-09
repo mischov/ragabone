@@ -1,5 +1,7 @@
 # Ragabone
 
+### **Ragabone is deprecated in favor of [Reaver](https://github.com/mischov/reaver).**
+
 Ragabone is a Clojure library for extracting data out of HTML and into edn.
 
 For example, here is how you would scrape the story headlines and links from the Clojure subreddit.
